@@ -17,9 +17,11 @@ from typing import Any
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+from messaging_client import dispatch_guardian_alert
+import logging
 
 
 def _env(key: str, default: str | None = None) -> str | None:
@@ -128,7 +130,7 @@ async def _trigger_hardware(event_id: str) -> str:
     return status
 
 
-async def _process_anomaly(payload: AnomalyPayload) -> dict[str, str]:
+async def _process_anomaly(payload: AnomalyPayload, background_tasks: BackgroundTasks) -> dict[str, str]:
     """
     Shared handler for anomaly webhooks.
 
@@ -153,40 +155,54 @@ async def _process_anomaly(payload: AnomalyPayload) -> dict[str, str]:
     else:
         _update_event(event_id, hardware_status="not_configured")
 
+    # Dispatch the Guardian SMS alert asynchronously
+    # If heart rate is high, flag heart rate, else respiration.
+    vital_name = "Heart Rate" if getattr(payload, "heart_rate", 0) > 60 else "Respiration"
+    current_value = payload.heart_rate if vital_name == "Heart Rate" else payload.respiration
+
+    background_tasks.add_task(
+        dispatch_guardian_alert,
+        patient_name="Alex",
+        vital=vital_name,
+        value=current_value,
+        threshold=60,
+        notes=f"Triggered by AuraSense vision module ({payload.trigger_source})."
+    )
+
     return {
         "status": "success",
-        "message": "Intervention triggered",
+        "message": "Intervention triggered and guardian triggered",
         "event_id": event_id,
     }
 
 
 @app.post("/api/anomaly")
-async def receive_anomaly(payload: AnomalyPayload) -> dict[str, str]:
+async def receive_anomaly(payload: AnomalyPayload, background_task: BackgroundTasks) -> dict[str, str]:
     """Legacy/general anomaly endpoint."""
-    return await _process_anomaly(payload)
+    return await _process_anomaly(payload, background_task)
 
 
 @app.post("/api/panic")
-async def receive_panic(payload: AnomalyPayload) -> dict[str, str]:
+async def receive_panic(payload: AnomalyPayload, background_tasks: BackgroundTasks) -> dict[str, str]:
     """Webhook endpoint used by the vision layer when panic threshold is met."""
-    return await _process_anomaly(payload)
+    return await _process_anomaly(payload, background_tasks)
 
 
 @app.post("/events")
-async def receive_event(payload: AnomalyPayload) -> dict[str, str]:
+async def receive_event(payload: AnomalyPayload, background_tasks: BackgroundTasks) -> dict[str, str]:
     """Webhook endpoint matching root contract POST /events."""
-    return await _process_anomaly(payload)
+    return await _process_anomaly(payload, background_tasks)
 
 
 @app.post("/simulate")
-async def simulate() -> dict[str, str]:
+async def simulate(background_tasks: BackgroundTasks) -> dict[str, str]:
     """Fire a fake high-stress event through the real pipeline (the demo trigger)."""
     return await _process_anomaly(AnomalyPayload(
         event="panic_attack",
         trigger_source="simulate",
         heart_rate=118,
         respiration=26,
-    ))
+    ), background_tasks)
 
 
 @app.post("/device/idle")
