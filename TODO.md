@@ -185,6 +185,47 @@ display CPUs and list every rule in AGENTS.md that can brick a CPU."*
 
 ---
 
+## Agent to-dos — Integration
+
+Plan and reasoning: the "AuraSense Integration Plan" doc. Hardware (board,
+webcam) runs on **Windows**; WSL only builds firmware.
+
+### Tooling setup (user, once per laptop)
+
+- [x] **I.1** Backend Python packages on Windows (done 2026-10-03; main's backend starts and answers `/health`)
+  1. `py -m pip install --user fastapi uvicorn requests pydantic python-dotenv pyserial`
+  2. PowerShell (or `py.exe ...` from WSL)
+  3. `Successfully installed ...`. The backend must run with Windows Python: WSL can't open COM ports.
+- [x] **I.2** Root `.env` for the backend (FinchNode was dropped on main; `.env` now only needs `DEVICE_ADDRESS=auto` on the demo laptop)
+  1. Copy `backend/.env.example` (on `main`) to `.env` at the repo root.
+  2. Any terminal
+  3. Set `DEVICE_ADDRESS=auto` when the board is plugged in. Never commit `.env`.
+- [x] **I.3** Vision on the C: drive (done 2026-10-03 at `C:\Users\sandr\MHacks26\AuraSense\vision`; SDK loads, webcam found)
+  1. Copy `vision/` (on `main`) to `C:\Users\<you>\MHacks26\AuraSense\vision`, then run `npm install` there.
+  2. PowerShell
+  3. `node_modules\@smartspectra` exists. Never run `npm install` for vision from WSL (it fetches Linux binaries).
+- [ ] **I.4** Presage key: `PRESAGE_API_KEY=...` in `vision\.env` (from the vision owner). The file exists with an empty value.
+- [ ] **I.5** Camera access (webcam enumerates; confirm capture once I.4 is done): Settings → Privacy & security → Camera → "Let desktop apps access your camera" on.
+
+### Code changes (agent)
+
+- [x] **I.6** Merge `origin/main` — done on branch `integrate/main` (main at
+      `94b1f06`, FinchNode removed). Only conflict: `backend/requirements.txt`.
+- [x] **I.7** (fixed on main by the vision owner) Fix the vision port: `vision/monitor.js:19` posts to `:800`;
+      the backend listens on `:8000`. Read it from `.env` with an `:8000` default.
+- [x] **I.8** (done; `DEVICE_ADDRESS` in `.env`) Replace `_trigger_hardware()` in `backend/main.py` (HTTP POST to
+      `HARDWARE_IP_URL`, which the firmware doesn't serve) with
+      `device.Device().intervene(...)` in `asyncio.to_thread`. Point
+      `device.py` at `firmware/tools/fw.py`.
+- [x] **I.9** (done, tested on the board) Add the README §4.3 routes: `POST /simulate` (fake high event
+      through `_process_anomaly`) and `POST /device/idle` (`Device().idle()`).
+- [ ] **I.10** Update README §4.1/§4.3 to match the real payload and routes.
+- [ ] **I.11** Open the PR from `integrate/main` into `main`; delete the merged
+      `backend` and `presage` branches.
+- [x] **I.12** Rename Aegis to AuraSense across the backend.
+
+---
+
 ## Timeline (vs. README §10)
 
 | By hour | Done |
