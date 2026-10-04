@@ -66,3 +66,5 @@ dmypy.json
 *.swo
 .DS_Store
 s
+
+/vision/node_modules
