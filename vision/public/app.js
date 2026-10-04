@@ -9,9 +9,18 @@ const els = {
   log: document.getElementById('event-log')
 };
 
+// Windows releases the webcam asynchronously after track.stop(). Starting the
+// SDK before then fails with 0xC00D3704 (camera busy).
+const CAMERA_RELEASE_MS = 700;
+
 let es = null;
 let browserStream = null;
+let previewPromise = null; // in-flight getUserMedia, so overlapping calls share it
 let visionActive = false;
+let starting = false; // between clicking Start and the server confirming
+let busy = false; // a Start/Stop request is in flight
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function logMsg(msg) {
   const div = document.createElement('div');
@@ -26,6 +35,11 @@ function setStatus(state) {
   if (state === 'on') els.statusBadge.classList.add('on');
   if (state === 'triggered') els.statusBadge.classList.add('triggered');
   els.statusBadge.textContent = state === 'triggered' ? 'TRIGGERED' : state.toUpperCase();
+}
+
+function setButton(active) {
+  els.btnToggle.textContent = active ? 'Stop Vision' : 'Start Vision';
+  els.btnToggle.className = active ? 'btn-active' : 'btn-primary';
 }
 
 function showOverlay(text) {
@@ -57,9 +71,13 @@ function showVitals(d) {
   }
 }
 
-async function startBrowserPreview() {
+function previewAllowed() {
+  return !visionActive && !starting;
+}
+
+async function acquireCamera() {
   try {
-    const constraints = {
+    return await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: 'user',
         width: { ideal: 1280 },
@@ -69,24 +87,38 @@ async function startBrowserPreview() {
           { whiteBalanceMode: 'continuous' }
         ]
       }
-    };
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-    browserStream = stream;
-    els.video.srcObject = stream;
-    hideOverlay();
-    logMsg('Camera preview on');
+    });
   } catch (e) {
+    return await navigator.mediaDevices.getUserMedia({ video: true });
+  }
+}
+
+// Idempotent: never holds more than one browser stream on the camera.
+function startBrowserPreview() {
+  if (browserStream || !previewAllowed()) return Promise.resolve();
+  if (previewPromise) return previewPromise;
+
+  previewPromise = (async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      const stream = await acquireCamera();
+      // Vision may have started while getUserMedia was pending; hand the
+      // camera straight back instead of leaking the stream.
+      if (!previewAllowed() || browserStream) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       browserStream = stream;
       els.video.srcObject = stream;
       hideOverlay();
-      logMsg('Camera preview on (basic)');
-    } catch (e2) {
+      logMsg('Camera preview on');
+    } catch (e) {
       showOverlay('Camera unavailable');
-      logMsg('Preview failed: ' + e2.message);
+      logMsg('Preview failed: ' + e.message);
+    } finally {
+      previewPromise = null;
     }
-  }
+  })();
+  return previewPromise;
 }
 
 function stopBrowserPreview() {
@@ -95,6 +127,14 @@ function stopBrowserPreview() {
   browserStream = null;
   els.video.srcObject = null;
   logMsg('Camera preview off');
+}
+
+function handleStopped() {
+  visionActive = false;
+  setStatus('off');
+  setButton(false);
+  clearVitals();
+  // startBrowserPreview(); // TEMP: camera preview disabled
 }
 
 function connectSSE() {
@@ -113,13 +153,13 @@ function connectSSE() {
       } else if (msg.type === 'started') {
         visionActive = true;
         setStatus('on');
+        setButton(true);
         logMsg('Vision ON');
       } else if (msg.type === 'stopped') {
-        visionActive = false;
-        setStatus('off');
-        clearVitals();
+        // Fires for user stops and for the server giving up after a camera
+        // failure. This is the only place the preview restarts after Stop.
         logMsg('Vision OFF');
-        startBrowserPreview();
+        handleStopped();
       } else if (msg.type === 'error') {
         logMsg('SDK error: ' + JSON.stringify(msg.data));
       }
@@ -131,28 +171,34 @@ function connectSSE() {
   };
 }
 
+// Keeps the badge and button in sync with the server. Never touches the
+// camera: opening it from a timer is what raced the SDK for the webcam.
 async function fetchStatus() {
+  if (busy) return;
   try {
     const res = await fetch('/api/status');
     const data = await res.json();
+    if (busy) return;
     visionActive = data.active;
-    if (data.active) {
-      setStatus('on');
-      stopBrowserPreview();
-    } else {
-      setStatus('off');
-      clearVitals();
-      if (!browserStream) startBrowserPreview();
-    }
+    setStatus(data.active ? 'on' : 'off');
+    setButton(data.active);
+    if (!data.active) clearVitals();
   } catch (e) {
     setStatus('off');
   }
 }
 
 async function visionOn() {
+  busy = true;
+  starting = true;
   els.btnToggle.disabled = true;
-  stopBrowserPreview();
   try {
+    // Let any in-flight preview open finish (it closes itself since
+    // starting is set), then release the camera and give Windows time.
+    if (previewPromise) await previewPromise;
+    stopBrowserPreview();
+    await sleep(CAMERA_RELEASE_MS);
+
     const res = await fetch('/api/control/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -162,34 +208,35 @@ async function visionOn() {
     if (!res.ok) throw new Error(data.error || 'Unknown');
     visionActive = true;
     setStatus('on');
-    els.btnToggle.textContent = 'Stop Vision';
-    els.btnToggle.className = 'btn-active';
+    setButton(true);
     logMsg('Vision started');
   } catch (e) {
     logMsg('Start failed: ' + e.message);
-    visionActive = false;
-    setStatus('off');
-    clearVitals();
-    startBrowserPreview();
+    starting = false;
+    handleStopped();
+  } finally {
+    starting = false;
+    busy = false;
+    els.btnToggle.disabled = false;
   }
-  els.btnToggle.disabled = false;
 }
 
 async function visionOff() {
+  busy = true;
   els.btnToggle.disabled = true;
   try {
-    await fetch('/api/control/stop', { method: 'POST' });
-    visionActive = false;
-    setStatus('off');
-    clearVitals();
-    els.btnToggle.textContent = 'Start Vision';
-    els.btnToggle.className = 'btn-primary';
+    const res = await fetch('/api/control/stop', { method: 'POST' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     logMsg('Vision stopped');
-    await startBrowserPreview();
+    // Covers the case where the SSE 'stopped' event was missed; a no-op if
+    // it already restarted the preview.
+    handleStopped();
   } catch (e) {
     logMsg('Stop failed: ' + e.message);
+  } finally {
+    busy = false;
+    els.btnToggle.disabled = false;
   }
-  els.btnToggle.disabled = false;
 }
 
 els.btnToggle.addEventListener('click', () => {
@@ -201,5 +248,6 @@ els.btnToggle.addEventListener('click', () => {
   clearVitals();
   connectSSE();
   await fetchStatus();
+  // if (!visionActive) startBrowserPreview(); // TEMP: camera preview disabled
   setInterval(fetchStatus, 3000);
 })();
