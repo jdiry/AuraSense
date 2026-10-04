@@ -29,6 +29,7 @@ MANIFEST
 
 # Virtual environments
 .env
+backend/.venv
 .venv
 env/
 venv/
@@ -68,3 +69,4 @@ dmypy.json
 s
 
 /vision/node_modules
+venv

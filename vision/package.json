@@ -4,7 +4,8 @@
   "description": "",
   "main": "monitor.js",
   "scripts": {
-    "start": "node monitor.js"
+    "start": "node monitor.js",
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",

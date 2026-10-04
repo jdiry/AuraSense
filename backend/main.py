@@ -2,10 +2,8 @@
 main.py
 FastAPI core router + live dashboard for Aegis.
 
-Receives anomaly webhooks from the vision/DS pipeline, immediately wakes the
-local FREE-WILi hardware, and logs the event to the FinchNode sandbox in the
-background. A small in-memory event log and HTML dashboard let you watch the
-process in real time.
+Receives anomaly webhooks from the vision pipeline and coordinates responses.
+A small in-memory event log and HTML dashboard let you monitor the process in real time.
 """
 
 import asyncio
@@ -20,11 +18,9 @@ from typing import Any
 import requests
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-
-from finchnode import log_health_anomaly
 
 
 def _env(key: str, default: str | None = None) -> str | None:
@@ -40,8 +36,7 @@ def _env(key: str, default: str | None = None) -> str | None:
 project_root = Path(__file__).resolve().parent.parent
 load_dotenv(project_root / ".env")
 
-HARDWARE_IP_URL = _env("HARDWARE_IP_URL", "http://192.168.1.100/trigger")
-# The vision layer may send webhooks to a specific port; make it configurable.
+HARDWARE_IP_URL = _env("HARDWARE_IP_URL")
 PORT = int(_env("PORT", "8000"))
 MAX_EVENTS = 50
 
@@ -79,7 +74,7 @@ def _update_event(event_id: str, **kwargs: Any) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan hook for any startup/shutdown logic."""
+    """Application lifespan hook for startup/shutdown logic."""
     print("[Aegis Backend] Starting up...")
     yield
     print("[Aegis Backend] Shutting down...")
@@ -101,8 +96,6 @@ async def _trigger_hardware(url: str, event_id: str) -> str:
         status = f"ok ({response.status_code})"
         print(f"[Hardware] Device triggered: {response.status_code}")
     except requests.exceptions.RequestException as exc:
-        # The hardware may be offline; log and continue so the user still gets
-        # a fast HTTP response and the sandbox logging attempt still happens.
         status = f"error: {exc}"
         print(f"[Hardware] Could not reach FREE-WILi board at {url}: {exc}")
 
@@ -110,23 +103,11 @@ async def _trigger_hardware(url: str, event_id: str) -> str:
     return status
 
 
-def _run_finchnode_log(
-    event_id: str, heart_rate: int | float, stress_score: int | float
-) -> None:
-    """Background helper that logs to FinchNode and updates the event log."""
-    status = log_health_anomaly(heart_rate, stress_score)
-    _update_event(event_id, finchnode_status=status)
-
-
-async def _process_anomaly(
-    payload: AnomalyPayload,
-    background_tasks: BackgroundTasks,
-) -> dict[str, str]:
+async def _process_anomaly(payload: AnomalyPayload) -> dict[str, str]:
     """
     Shared handler for anomaly webhooks.
 
-    Records the event, triggers the hardware, and queues the FinchNode sandbox
-    write in the background.
+    Records the event and triggers hardware intervention if configured.
     """
     event_id = str(uuid.uuid4())
     event = {
@@ -137,21 +118,15 @@ async def _process_anomaly(
         "heart_rate": payload.heart_rate,
         "respiration": payload.respiration,
         "stress_score": payload.stress_score,
-        "finchnode_status": "pending",
         "hardware_status": "pending",
     }
     _add_event(event)
 
-    # Offload the sandbox write to the background.
-    background_tasks.add_task(
-        _run_finchnode_log,
-        event_id,
-        payload.heart_rate,
-        payload.stress_score,
-    )
-
-    # Trigger the physical intervention without blocking the event loop.
-    await _trigger_hardware(HARDWARE_IP_URL, event_id)
+    # Trigger physical intervention if configured, otherwise mark as not configured.
+    if HARDWARE_IP_URL:
+        await _trigger_hardware(HARDWARE_IP_URL, event_id)
+    else:
+        _update_event(event_id, hardware_status="not_configured")
 
     return {
         "status": "success",
@@ -161,40 +136,39 @@ async def _process_anomaly(
 
 
 @app.post("/api/anomaly")
-async def receive_anomaly(
-    payload: AnomalyPayload,
-    background_tasks: BackgroundTasks,
-) -> dict[str, str]:
+async def receive_anomaly(payload: AnomalyPayload) -> dict[str, str]:
     """Legacy/general anomaly endpoint."""
-    return await _process_anomaly(payload, background_tasks)
+    return await _process_anomaly(payload)
 
 
 @app.post("/api/panic")
-async def receive_panic(
-    payload: AnomalyPayload,
-    background_tasks: BackgroundTasks,
-) -> dict[str, str]:
+async def receive_panic(payload: AnomalyPayload) -> dict[str, str]:
     """Webhook endpoint used by the vision layer when panic threshold is met."""
-    return await _process_anomaly(payload, background_tasks)
+    return await _process_anomaly(payload)
+
+
+@app.post("/events")
+async def receive_event(payload: AnomalyPayload) -> dict[str, str]:
+    """Webhook endpoint matching root contract POST /events."""
+    return await _process_anomaly(payload)
 
 
 @app.get("/events")
 async def get_events() -> list[dict[str, Any]]:
     """Return the recent anomaly event log for the dashboard."""
     with _event_lock:
-        # Return a shallow copy so the caller can't mutate our list.
         return list(event_log)
 
 
 @app.get("/health")
 async def health_check() -> dict[str, str]:
-    """Simple liveness endpoint for the hackathon demo / monitoring."""
+    """Simple liveness endpoint for demo / monitoring."""
     return {"status": "ok"}
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard() -> str:
-    """A tiny web UI to trigger and watch the Aegis pipeline."""
+    """A web UI to trigger and monitor the Aegis pipeline."""
     return """
 <!doctype html>
 <html lang="en">
@@ -229,12 +203,11 @@ async def dashboard() -> str:
         <th>Trigger</th>
         <th>Heart Rate</th>
         <th>Respiration</th>
-        <th>FinchNode</th>
         <th>Hardware</th>
       </tr>
     </thead>
     <tbody id="log">
-      <tr><td colspan="7">Loading…</td></tr>
+      <tr><td colspan="6">Loading…</td></tr>
     </tbody>
   </table>
 
@@ -247,7 +220,7 @@ async def dashboard() -> str:
         const res = await fetch('/events');
         const events = await res.json();
         if (events.length === 0) {
-          logEl.innerHTML = '<tr><td colspan="7">No events yet.</td></tr>';
+          logEl.innerHTML = '<tr><td colspan="6">No events yet.</td></tr>';
           return;
         }
         logEl.innerHTML = events.slice().reverse().map(e => `
@@ -257,12 +230,11 @@ async def dashboard() -> str:
             <td>${e.trigger_source || '-'}</td>
             <td>${e.heart_rate}</td>
             <td>${e.respiration}</td>
-            <td class="${e.finchnode_status.startsWith('ok') ? 'ok' : e.finchnode_status === 'pending' ? 'pending' : 'err'}">${e.finchnode_status}</td>
             <td class="${e.hardware_status.startsWith('ok') ? 'ok' : e.hardware_status === 'pending' ? 'pending' : 'err'}">${e.hardware_status}</td>
           </tr>
         `).join('');
       } catch (err) {
-        logEl.innerHTML = `<tr><td colspan="7" class="err">Could not load events: ${err}</td></tr>`;
+        logEl.innerHTML = `<tr><td colspan="6" class="err">Could not load events: ${err}</td></tr>`;
       }
     }
 
