@@ -1,3 +1,3 @@
 [submodule "wiliOGbsp"]
 	path = firmware/wiliOGbsp
-	url = https://github.com/freewili/wiliOGbsp.git
+	url = https://github.com/alessandrofelici/wiliOGbsp.git
