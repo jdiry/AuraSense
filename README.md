@@ -13,17 +13,15 @@ Built at MHacks. Tracks: Hardware, Healthcare, AI.
 ```mermaid
 flowchart LR
     CAM[Laptop webcam] --> VIS[vision/<br/>SmartSpectra SDK<br/>+ smoothing + trigger]
-    VIS -- "POST /events" --> API[backend/<br/>FastAPI router]
-    API -- "1. intervene (priority)" --> DEV[FREE-WILi<br/>screen + LEDs + speaker]
-    API -- "2. log" --> FIN[FinchNode<br/>FHIR record]
-    API -- "3. alert" --> REL[Relay<br/>SMS to contact]
-    EL[ElevenLabs] -. "pre-generated audio" .-> DEV
+    VIS -- "POST /api/panic" --> API[backend/<br/>FastAPI router]
+    API -- "1. alert" --> REL[Message to loved one<br/>SMS / push notification]
+    API -- "2. intervene" --> DEV[FREE-WILi<br/>screen + LEDs + speaker]
 ```
 
-1. **Monitor** — `vision/` reads the webcam through the Presage SmartSpectra SDK and streams pulse and breathing rate.
-2. **Detect** — `vision/` smooths the signal, compares it to the user's baseline, and fires `POST /events` when the trigger rule holds.
-3. **Route** — `backend/` sends the device command first, then logs to FinchNode and alerts via Relay in parallel.
-4. **Intervene** — FREE-WILi wakes, pulses LEDs in a 4-4-4-4 box-breathing cycle, animates a breathing circle, and plays calming audio.
+1. **Monitor** — `vision/` reads the webcam through the Presage SmartSpectra SDK and tracks pulse and breathing rate.
+2. **Detect** — `vision/` smooths the signal, checks biometric thresholds, and fires `POST /api/panic` when acute stress/panic is detected.
+3. **Route** — `backend/` coordinates alerting the user's loved one and sending the intervention command to FREE-WILi.
+4. **Intervene** — FREE-WILi wakes, pulses LEDs in a 4-4-4-4 box-breathing cycle, animates a breathing circle, and plays calming guidance.
 
 ---
 
@@ -46,10 +44,9 @@ AuraSense/
 │
 ├── backend/                  # Backend Engineer — FastAPI
 │   ├── requirements.txt
-│   ├── main.py               # App, /events, /simulate, /health
+│   ├── main.py               # App, /events, /api/panic, /health
 │   ├── device.py             # FREE-WILi adapter (serial or network)
-│   ├── finchnode.py          # FHIR payload builder + client
-│   ├── comms.py              # Relay alert
+│   ├── comms.py              # Messaging alert
 │   └── voice.py              # ElevenLabs clip pre-generation
 │
 ├── vision/                   # Vision Engineer — SmartSpectra
@@ -129,7 +126,7 @@ Transport is decided in D2. The payload is the same either way.
 | POST | `/events` | Real trigger from vision |
 | POST | `/simulate` | Fires a fake `high` event. **Used in the demo.** |
 | POST | `/device/idle` | Stops the intervention |
-| GET | `/health` | Status of device link, FinchNode, Relay, ElevenLabs |
+| GET | `/health` | Status of device link, loved one messaging, ElevenLabs |
 
 ---
 
@@ -147,27 +144,13 @@ Thresholds are starting points. Tune them on the team, then freeze them before j
 
 ---
 
-## 6. FHIR logging (backend)
-
-Use a synthetic patient. Log each event as FHIR `Observation` resources:
-
-| Measurement | LOINC code |
-|-------------|-----------|
-| Heart rate | 8867-4 |
-| Respiratory rate | 9279-1 |
-
-Attach `event_id`, timestamp, and severity. Confirm the exact FinchNode endpoint and auth with the sponsor before writing the client.
-
----
-
-## 7. Environment setup
+## 6. Environment setup
 
 Copy `.env.example` to `.env` and fill in values. **Never commit `.env`. Never paste real keys into docs, prompts, or chat.**
 
 ```bash
 # .env.example
 PRESAGE_API_KEY=
-FINCH_API_KEY=
 ELEVENLABS_API_KEY=
 RELAY_API_KEY=
 EMERGENCY_CONTACT_PHONE=+1XXXXXXXXXX
@@ -191,9 +174,9 @@ cd vision && npm install && node monitor.js
 
 ---
 
-## 8. Roles
+## 7. Roles
 
-### 8.1 Firmware Engineer — `firmware/`
+### 7.1 Firmware Engineer — `firmware/`
 
 **Goal:** the board reacts to commands within 1 s.
 
@@ -206,17 +189,17 @@ cd vision && npm install && node monitor.js
 
 **Done when:** `curl /simulate` triggers the full sequence 10 times in a row with no reset.
 
-### 8.2 Backend Engineer — `backend/`
+### 7.2 Backend Engineer — `backend/`
 
 **Goal:** one event in, all actions out, with failure isolation.
 
 - Build `/events`, `/simulate`, `/device/idle`, `/health` (§4.3).
-- Send the device command first. Run FinchNode and Relay with `asyncio.gather` and timeouts.
-- A failing API must log an error, not block the device.
+- Send the device command first. Run messaging alerts asynchronously with timeouts.
+- A failing external API must log an error, not block the device.
 - Pre-generate 3–5 ElevenLabs clips at setup, not at trigger time (D4).
 - Deduplicate on `event_id`.
 
-**Done when:** `/simulate` works with FinchNode and Relay keys removed.
+**Done when:** `/simulate` triggers device intervention reliably.
 
 ### 8.3 Vision Engineer — `vision/`
 
@@ -265,7 +248,7 @@ Nobody on the team can produce a real panic attack on cue. Plan for that.
 | 6 | `/simulate` → device changes state (no UI polish). |
 | 10 | Vision streams real metrics to console. |
 | 14 | Vision → backend → device, end to end. |
-| 18 | FinchNode + Relay + audio wired in. |
+| 18 | Messaging alert + audio wired in. |
 | 22 | Enclosure assembled. Thresholds frozen. |
 | 24+ | Demo rehearsal only. No new features. |
 
