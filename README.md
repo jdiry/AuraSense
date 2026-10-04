@@ -1,10 +1,10 @@
-# Aegis
+# AuraSense
 
 A desktop health companion that detects acute stress from a webcam and physically intervenes with a guided breathing device.
 
 Built at MHacks. Tracks: Hardware, Healthcare, AI.
 
-> **Not a medical device.** Aegis is a prototype. Webcam rPPG is not validated for diagnosing panic, asthma, or cardiac events. The demo scope is **acute stress / panic-style episodes only**. Do not claim asthma or cardiac detection to judges.
+> **Not a medical device.** AuraSense is a prototype. Webcam rPPG is not validated for diagnosing panic, asthma, or cardiac events. The demo scope is **acute stress / panic-style episodes only**. Do not claim asthma or cardiac detection to judges.
 
 ---
 
@@ -30,7 +30,7 @@ flowchart LR
 ## 2. Repository layout
 
 ```text
-aegis/
+AuraSense/
 ├── README.md
 ├── .env.example              # Placeholders only. Never commit .env
 ├── .gitignore                # Must include .env
@@ -41,7 +41,7 @@ aegis/
 │   │   ├── main.cpp          # Command listener + state machine
 │   │   ├── ui.cpp            # Breathing circle on 3.5" display
 │   │   └── leds.cpp          # LED pulse pattern
-│   ├── include/aegis.h
+│   ├── include/AuraSense.h
 │   └── assets/               # Audio clips uploaded to the board
 │
 ├── backend/                  # Backend Engineer — FastAPI
@@ -60,7 +60,7 @@ aegis/
 │       └── trigger.js        # Baseline + trigger rule
 │
 └── mechanical/               # Product Designer
-    ├── aegis_stand.stl
+    ├── AuraSense_stand.stl
     ├── laser_cut.dxf
     └── assembly_notes.md
 ```
@@ -74,8 +74,8 @@ These are unresolved in the original plan. Each blocks at least one other person
 | # | Question | Default | Owner | Decision |
 |---|----------|---------|-------|----------|
 | D1 | Vision language | Node.js SmartSpectra SDK. Fallback: C++ SDK example binary printing JSON to stdout. There is no official Python SDK. | Vision | |
-| D2 | Laptop → board transport | USB serial via the `freewili` Python package. Use WiFi only if confirmed working on our board. | Firmware + Backend | |
-| D3 | Board program type | Confirm with FREE-WILi mentors: custom C++ firmware vs. a WASM app run on stock firmware. Pick the faster path. | Firmware | |
+| D2 | Laptop → board transport | USB serial via the `freewili` Python package. Use WiFi only if confirmed working on our board. | Firmware + Backend | **USB serial via `pyserial`**, one JSON line per command to the display CPU (`backend/device.py`). The `freewili` package targets stock firmware and does not apply. |
+| D3 | Board program type | Confirm with FREE-WILi mentors: custom C++ firmware vs. a WASM app run on stock firmware. Pick the faster path. | Firmware | **Custom C firmware on the `wiliOGbsp` BSP** (`firmware/`). |
 | D4 | Audio path | Pre-generate clips with ElevenLabs, upload to board, play on trigger. Fallback: play on laptop. No live streaming to board. | Backend + Firmware | |
 | D5 | Demo OS | Mac or Linux laptop for vision (C++ SDK targets Mac/Linux; Windows needs WSL). | Vision | |
 | D6 | "Stress" metric | SmartSpectra exposes pulse, breathing, expression, talking. Confirm whether a stress score exists. If not, trigger on pulse + breathing. | Vision | |
@@ -199,7 +199,7 @@ cd vision && npm install && node monitor.js
 
 - Resolve D2 and D3 first.
 - Implement the command listener for `intervene`, `idle`, `ping` (§4.2).
-- Idle state: dim, slow LED glow, "Aegis" on screen.
+- Idle state: dim, slow LED glow, "AuraSense" on screen.
 - Intervene state: breathing circle expands 4 s, holds 4 s, contracts 4 s, holds 4 s. LEDs track the circle.
 - Play the clip named in the command.
 - Return to idle after `duration_s` or on `idle`.
