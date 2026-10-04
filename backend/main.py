@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import requests
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -36,7 +35,11 @@ def _env(key: str, default: str | None = None) -> str | None:
 project_root = Path(__file__).resolve().parent.parent
 load_dotenv(project_root / ".env")
 
-HARDWARE_IP_URL = _env("HARDWARE_IP_URL")
+# The FREE-WILi display CPU, over USB serial (backend/device.py). Blank = no
+# board connected; "auto" = find it by USB ID; or a port such as COM4. The
+# board's COM ports are only visible to Windows Python, not to WSL.
+DEVICE_ADDRESS = _env("DEVICE_ADDRESS")
+INTERVENE_DURATION_S = int(_env("INTERVENE_DURATION_S", "120"))
 PORT = int(_env("PORT", "8000"))
 MAX_EVENTS = 50
 
@@ -83,21 +86,43 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="AuraSense Backend Router", lifespan=lifespan)
 
 
-async def _trigger_hardware(url: str, event_id: str) -> str:
-    """
-    Wake the FREE-WILi board with an HTTP request.
+# One serial port, one user at a time: overlapping webhooks would otherwise
+# race to open it and the second would fail with "access denied".
+_device_lock = threading.Lock()
 
-    Runs the synchronous `requests` call in a thread pool so the event loop
-    is not blocked during the hackathon demo.
+
+def _device_command(name: str, **kwargs: Any) -> dict[str, Any]:
+    """Open the board, send one command (ping/idle/intervene), close it."""
+    try:
+        from backend import device   # imported as a package (pytest)
+    except ImportError:
+        import device                # run as a script: python backend/main.py
+    port = None if DEVICE_ADDRESS.lower() == "auto" else DEVICE_ADDRESS
+    with _device_lock, device.Device(port=port) as dev:
+        return getattr(dev, name)(**kwargs)
+
+
+def _reply_status(reply: dict[str, Any]) -> str:
+    if reply.get("ok"):
+        return f"ok ({reply.get('state')})"
+    return f"error: {reply.get('error', 'rejected')}"
+
+
+async def _trigger_hardware(event_id: str) -> str:
+    """
+    Start a breathing session on the FREE-WILi board.
+
+    The serial round trip runs in a thread pool so the event loop is not
+    blocked during the hackathon demo.
     """
     try:
-        response = await asyncio.to_thread(requests.post, url, timeout=2)
-        response.raise_for_status()
-        status = f"ok ({response.status_code})"
-        print(f"[Hardware] Device triggered: {response.status_code}")
-    except requests.exceptions.RequestException as exc:
+        reply = await asyncio.to_thread(
+            _device_command, "intervene", duration_s=INTERVENE_DURATION_S)
+        status = _reply_status(reply)
+        print(f"[Hardware] Device replied: {reply}")
+    except Exception as exc:  # unplugged, port busy, no reply: never fail the webhook
         status = f"error: {exc}"
-        print(f"[Hardware] Could not reach FREE-WILi board at {url}: {exc}")
+        print(f"[Hardware] Could not reach the FREE-WILi board: {exc}")
 
     _update_event(event_id, hardware_status=status)
     return status
@@ -123,8 +148,8 @@ async def _process_anomaly(payload: AnomalyPayload) -> dict[str, str]:
     _add_event(event)
 
     # Trigger physical intervention if configured, otherwise mark as not configured.
-    if HARDWARE_IP_URL:
-        await _trigger_hardware(HARDWARE_IP_URL, event_id)
+    if DEVICE_ADDRESS:
+        await _trigger_hardware(event_id)
     else:
         _update_event(event_id, hardware_status="not_configured")
 
@@ -151,6 +176,29 @@ async def receive_panic(payload: AnomalyPayload) -> dict[str, str]:
 async def receive_event(payload: AnomalyPayload) -> dict[str, str]:
     """Webhook endpoint matching root contract POST /events."""
     return await _process_anomaly(payload)
+
+
+@app.post("/simulate")
+async def simulate() -> dict[str, str]:
+    """Fire a fake high-stress event through the real pipeline (the demo trigger)."""
+    return await _process_anomaly(AnomalyPayload(
+        event="panic_attack",
+        trigger_source="simulate",
+        heart_rate=118,
+        respiration=26,
+    ))
+
+
+@app.post("/device/idle")
+async def device_idle() -> dict[str, str]:
+    """End a running breathing session on the board."""
+    if not DEVICE_ADDRESS:
+        return {"status": "not_configured"}
+    try:
+        reply = await asyncio.to_thread(_device_command, "idle")
+        return {"status": _reply_status(reply)}
+    except Exception as exc:
+        return {"status": f"error: {exc}"}
 
 
 @app.get("/events")

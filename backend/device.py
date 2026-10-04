@@ -24,7 +24,9 @@ import serial
 
 # The BSP's task runner already knows how to find a FREE-WILi CPU by USB PID
 # and product string, including on Windows where pyserial hides the product.
-_FW_TOOLS = pathlib.Path(__file__).resolve().parents[1] / "firmware" / "wiliOGbsp" / "tools"
+# firmware/tools/fw.py is a patched copy of the BSP's (main CPU on two COM
+# ports); use it until the fix is upstream.
+_FW_TOOLS = pathlib.Path(__file__).resolve().parents[1] / "firmware" / "tools"
 sys.path.insert(0, str(_FW_TOOLS))
 import fw  # noqa: E402
 
@@ -40,8 +42,8 @@ class DeviceError(RuntimeError):
 
 def find_port():
     """The display CPU's serial port, or raise DeviceError."""
-    forced = os.environ.get("DEVICE_ADDRESS")
-    if forced:
+    forced = (os.environ.get("DEVICE_ADDRESS") or "").strip()
+    if forced and forced.lower() != "auto":     # "auto" = find it by USB ID
         return forced
     try:
         return fw._pick_cpu_port(fw._cpu_ports(), "display")
