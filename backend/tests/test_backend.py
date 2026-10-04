@@ -112,4 +112,4 @@ def test_dashboard_returns_html(client):
     response = client.get("/dashboard")
     assert response.status_code == 200
     assert "<!doctype html>" in response.text.lower()
-    assert "Aegis Intervention Dashboard" in response.text
+    assert "AuraSense Intervention Dashboard" in response.text

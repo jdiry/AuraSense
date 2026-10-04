@@ -1,7 +1,7 @@
 {
   "info": {
-    "name": "Aegis Backend",
-    "description": "Postman collection for testing the Aegis backend router and dashboard.",
+    "name": "AuraSense Backend",
+    "description": "Postman collection for testing the AuraSense backend router and dashboard.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [

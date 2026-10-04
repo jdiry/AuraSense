@@ -1,6 +1,6 @@
 """
 main.py
-FastAPI core router + live dashboard for Aegis.
+FastAPI core router + live dashboard for AuraSense.
 
 Receives anomaly webhooks from the vision pipeline and coordinates responses.
 A small in-memory event log and HTML dashboard let you monitor the process in real time.
@@ -75,12 +75,12 @@ def _update_event(event_id: str, **kwargs: Any) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan hook for startup/shutdown logic."""
-    print("[Aegis Backend] Starting up...")
+    print("[AuraSense Backend] Starting up...")
     yield
-    print("[Aegis Backend] Shutting down...")
+    print("[AuraSense Backend] Shutting down...")
 
 
-app = FastAPI(title="Aegis Backend Router", lifespan=lifespan)
+app = FastAPI(title="AuraSense Backend Router", lifespan=lifespan)
 
 
 async def _trigger_hardware(url: str, event_id: str) -> str:
@@ -168,14 +168,14 @@ async def health_check() -> dict[str, str]:
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard() -> str:
-    """A web UI to trigger and monitor the Aegis pipeline."""
+    """A web UI to trigger and monitor the AuraSense pipeline."""
     return """
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Aegis Dashboard</title>
+  <title>AuraSense Dashboard</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
     h1 { font-size: 1.5rem; }
@@ -190,7 +190,7 @@ async def dashboard() -> str:
   </style>
 </head>
 <body>
-  <h1>Aegis Intervention Dashboard</h1>
+  <h1>AuraSense Intervention Dashboard</h1>
   <p>
     <button id="trigger">Trigger Test Panic Webhook</button>
     <span id="status"></span>
