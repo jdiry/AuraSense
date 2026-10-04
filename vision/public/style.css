@@ -1,0 +1,181 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  line-height: 1.5;
+}
+
+.container {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+h1 {
+  font-size: 1.4rem;
+}
+
+.badge {
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  background: #334155;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.badge.on {
+  background: #065f46;
+  color: #a7f3d0;
+}
+
+.badge.triggered {
+  background: #991b1b;
+  color: #fecaca;
+}
+
+.camera-section {
+  margin-bottom: 16px;
+}
+
+.camera-wrapper {
+  position: relative;
+  background: #020617;
+  border-radius: 12px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border: 1px solid #1e293b;
+}
+
+video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  filter: brightness(1.25);
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(2, 6, 23, 0.7);
+  font-size: 1.1rem;
+  color: #94a3b8;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.controls-bar {
+  margin-bottom: 16px;
+}
+
+button {
+  padding: 12px 24px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 1rem;
+  transition: opacity 0.15s, background 0.15s;
+  width: 100%;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: #0ea5e9;
+  color: #fff;
+}
+
+.btn-active {
+  background: #ef4444;
+  color: #fff;
+}
+
+.vitals-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.vitals-card {
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 18px;
+  text-align: center;
+  border: 1px solid #334155;
+}
+
+.vitals-card h3 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #94a3b8;
+  margin-bottom: 8px;
+}
+
+.value {
+  font-size: 2.4rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.value.blank {
+  color: #475569;
+}
+
+.sub {
+  font-size: 0.8rem;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.log-section h3 {
+  margin-bottom: 6px;
+  font-size: 0.9rem;
+  color: #94a3b8;
+}
+
+.log-box {
+  background: #020617;
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  max-height: 180px;
+  overflow-y: auto;
+  color: #cbd5e1;
+}
+
+.log-entry {
+  padding: 2px 0;
+  border-bottom: 1px solid #0f172a;
+}
+
+.log-entry:last-child {
+  border-bottom: none;
+}

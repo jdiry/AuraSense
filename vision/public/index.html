@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AuraSense Vision</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>AuraSense Vision</h1>
+      <div id="status-badge" class="badge">OFF</div>
+    </header>
+
+    <section class="camera-section" id="camera-section">
+      <div class="camera-wrapper">
+        <video id="camera-feed" autoplay playsinline muted></video>
+        <div id="camera-overlay" class="overlay hidden">
+          <span>Camera inactive</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="controls-bar">
+      <button id="btn-toggle" class="btn-primary">Start Vision</button>
+    </section>
+
+    <section class="vitals-row">
+      <div class="vitals-card">
+        <h3>Raw Heart Rate</h3>
+        <div class="value" id="val-hr">--</div>
+        <div class="sub">BPM</div>
+      </div>
+      <div class="vitals-card">
+        <h3>Raw Breathing Rate</h3>
+        <div class="value" id="val-rr">--</div>
+        <div class="sub">breaths/min</div>
+      </div>
+    </section>
+
+    <section class="log-section">
+      <h3>Event Log</h3>
+      <div id="event-log" class="log-box"></div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
