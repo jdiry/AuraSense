@@ -23,7 +23,7 @@ const FASTAPI_URL = process.env.FASTAPI_URL ||
 
 const triggerManager = new VitalsTrigger({
   bufferSize: 5,
-  hrThreshold: 100,
+  hrThreshold: 60,
   rrThreshold: 25,
   cooldownMs: 10000,
   webhookUrl: FASTAPI_URL
@@ -64,11 +64,17 @@ sdk.on('metrics', async (buf, ts) => {
     respirationRate: rawRr
   });
 
-  if (rawHr) {
-    console.log(`HR: ${result.smoothedHr} BPM (RAW HR: ${rawHr})`);
-  }
-  if (rawRr) {
-    console.log(`RR: ${result.smoothedRr} breaths/min (RAW RR: ${rawRr})`);
+  if (rawHr || rawRr) {
+    const hrBuf = triggerManager.hrSmoother.data.length;
+    const rrBuf = triggerManager.rrSmoother.data.length;
+    const needed = triggerManager.bufferSize;
+    console.log(
+      `[DEBUG] RAW HR: ${rawHr ?? 'n/a'} | RAW RR: ${rawRr ?? 'n/a'} ` +
+      `| Smoothed HR: ${result.smoothedHr} | Smoothed RR: ${result.smoothedRr} ` +
+      `| HR buffer: ${hrBuf}/${needed} | RR buffer: ${rrBuf}/${needed} ` +
+      `| Threshold HR>${triggerManager.hrThreshold} RR>${triggerManager.rrThreshold} ` +
+      `| Result: ${result.triggered ? '🚨 TRIGGERED' : result.reason}`
+    );
   }
 
   if (result.triggered) {
