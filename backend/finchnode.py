@@ -1,109 +1,88 @@
 """
 finchnode.py
-Healthcare / FHIR integration module for Aegis.
+FinchNode sandbox integration for Aegis.
 
-Exposes a single helper, `log_health_anomaly`, which builds a minimal but
-valid FHIR Observation resource from the supplied heart rate and stress score,
-then POSTs it to the configured FinchNode API endpoint.
+When the vision pipeline detects a panic/anxiety anomaly, this module writes a
+sandbox lifecycle event to FinchNode so the synthetic patient’s record can
+advance and reflect the latest state.
+
+Real FinchNode fields used:
+- Authorization: Bearer <FINCHNODE_API_KEY>
+- POST /api/v1/sandbox/subjects/{subject}/events
+- Body fields: type, source (optional)
+
+Environment variables are read from a .env file via python-dotenv.
 """
 
 import os
-from datetime import datetime, timezone
-from typing import Any
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 
-# Load environment variables from a .env file if one exists.
-load_dotenv()
 
-FINCHNODE_API_URL = os.getenv(
-    "FINCHNODE_API_URL", "https://api.finchnode.com/v1/Observation"
+def _env(key: str, default: str | None = None) -> str | None:
+    """Read an env var, stripping whitespace and surrounding quotes."""
+    value = os.getenv(key)
+    if value is None:
+        return default
+    value = value.strip().strip('"').strip("'")
+    return value if value else default
+
+
+# Load the root .env (the file in the project root, next to backend/).
+project_root = Path(__file__).resolve().parent.parent
+load_dotenv(project_root / ".env")
+
+FINCHNODE_API_URL = _env(
+    "FINCHNODE_API_URL", "https://api.finchnode.com/api/v1"
 )
+# The hackathon starter .env uses FINCH_API_KEY, so accept that as a fallback.
+FINCHNODE_API_KEY = _env("FINCHNODE_API_KEY") or _env("FINCH_API_KEY")
+FINCHNODE_SUBJECT = _env("FINCHNODE_SUBJECT") or _env("FINCH_SUBJECT")
+FINCHNODE_SANDBOX_SOURCE = _env("FINCHNODE_SANDBOX_SOURCE")
 
 
-def _build_fhir_observation(heart_rate: int, stress_score: int) -> dict[str, Any]:
-    """Construct a FHIR R4 Observation resource with the vital-sign data."""
-    now = datetime.now(timezone.utc).isoformat()
-
-    return {
-        "resourceType": "Observation",
-        "status": "final",
-        "category": [
-            {
-                "coding": [
-                    {
-                        "system": "http://terminology.hl7.org/CodeSystem/observation-category",
-                        "code": "vital-signs",
-                        "display": "Vital Signs",
-                    }
-                ],
-                "text": "Vital Signs",
-            }
-        ],
-        "code": {
-            "coding": [
-                {
-                    "system": "http://loinc.org",
-                    "code": "8867-4",
-                    "display": "Heart rate",
-                }
-            ],
-            "text": "Heart rate and stress observation",
-        },
-        "effectiveDateTime": now,
-        "component": [
-            {
-                "code": {
-                    "coding": [
-                        {
-                            "system": "http://loinc.org",
-                            "code": "8867-4",
-                            "display": "Heart rate",
-                        }
-                    ],
-                    "text": "Heart rate",
-                },
-                "valueQuantity": {
-                    "value": heart_rate,
-                    "unit": "beats/minute",
-                    "system": "http://unitsofmeasure.org",
-                    "code": "/min",
-                },
-            },
-            {
-                "code": {
-                    "text": "Stress score",
-                },
-                "valueQuantity": {
-                    "value": stress_score,
-                    "unit": "score",
-                    "system": "http://unitsofmeasure.org",
-                    "code": "1",
-                },
-            },
-        ],
-    }
-
-
-def log_health_anomaly(heart_rate: int, stress_score: int) -> None:
+def log_health_anomaly(
+    heart_rate: int | float, stress_score: int | float
+) -> str:
     """
-    Forward a health anomaly to the synthetic medical record via FinchNode.
+    Trigger a FinchNode sandbox event for the synthetic patient.
 
-    The function is intentionally fire-and-forget: any network or API failure
-    is caught and logged so the main routing backend remains stable.
+    The public sandbox API only accepts lifecycle controls, so this sends a
+    ``records.advance`` event. The heart_rate and stress_score are logged
+    locally for audit but are not accepted as request body fields by FinchNode.
+
+    Returns a short status string for the dashboard (e.g. "ok (202)" or
+    "error: ...").
     """
-    payload = _build_fhir_observation(heart_rate, stress_score)
+    if not FINCHNODE_SUBJECT:
+        msg = "FINCHNODE_SUBJECT is not set; cannot write to sandbox."
+        print(f"[FinchNode] {msg}")
+        return f"error: {msg}"
+
+    url = f"{FINCHNODE_API_URL.rstrip('/')}/sandbox/subjects/{FINCHNODE_SUBJECT}/events"
+
+    # Real FinchNode sandbox event body fields.
+    body: dict[str, str] = {"type": "records.advance"}
+    if FINCHNODE_SANDBOX_SOURCE:
+        body["source"] = FINCHNODE_SANDBOX_SOURCE
+
+    headers = {"Content-Type": "application/json"}
+    if FINCHNODE_API_KEY:
+        headers["Authorization"] = f"Bearer {FINCHNODE_API_KEY}"
 
     try:
-        response = requests.post(
-            FINCHNODE_API_URL,
-            json=payload,
-            timeout=5,
-            headers={"Content-Type": "application/fhir+json"},
-        )
+        response = requests.post(url, json=body, headers=headers, timeout=5)
         response.raise_for_status()
-        print(f"[FinchNode] Logged anomaly: {response.status_code}")
+        status = f"ok ({response.status_code})"
+        print(
+            f"[FinchNode] Advanced synthetic records for subject {FINCHNODE_SUBJECT}: "
+            f"{response.status_code} (HR={heart_rate}, Stress={stress_score})"
+        )
+        return status
     except requests.exceptions.RequestException as exc:
-        # Do not propagate the error; the backend must survive an external API outage.
-        print(f"[FinchNode] Failed to log anomaly: {exc}")
+        # Keep the backend stable even if the sandbox call fails.
+        status = f"error: {exc}"
+        print(f"[FinchNode] Failed to advance sandbox records: {exc}")
+        return status
