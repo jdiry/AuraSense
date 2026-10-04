@@ -77,8 +77,12 @@ Create or edit `.env` in the repository root or in this `backend/` directory:
 # Port the FastAPI backend listens on (default: 8000)
 PORT=8000
 
-# URL to trigger the FREE-WILi hardware device (optional / leave blank if unattached)
-HARDWARE_IP_URL=
+# FREE-WILi board over USB serial: blank = not connected, "auto" = find it
+# by USB ID, or a port such as COM4. Needs Windows Python (WSL can't see COM ports).
+DEVICE_ADDRESS=
+
+# Breathing session length on the board, in seconds (default: 120)
+INTERVENE_DURATION_S=120
 ```
 
 ### 3. Installation
@@ -150,8 +154,8 @@ uvicorn main:app --port 8001
 *(Remember to update `BACKEND_URL` in `vision/.env` if you change the port).*
 
 ### Error: `Could not reach FREE-WILi board` in console
-**Cause:** The hardware URL is either unreachable or the board is not plugged in.  
-**Fix:** This is non-blocking. The backend is designed with failure isolation so hardware timeouts do not crash or stall the server. To silence it, leave `HARDWARE_IP_URL` blank in `.env`.
+**Cause:** The board is unplugged, another program (a serial monitor, `fw console`) holds its COM port, or the backend is running under WSL Python, which can't see COM ports.  
+**Fix:** This is non-blocking: the webhook still succeeds and the event row shows `hardware_status: error: ...`. Close other serial programs, run the backend with Windows Python (`py backend/main.py`), or leave `DEVICE_ADDRESS` blank in `.env` to skip the board.
 
 ### Issue: Vision Webhook returns 422 Unprocessable Entity
 **Cause:** Missing required field `heart_rate` in the JSON request body.  

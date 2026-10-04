@@ -1,6 +1,6 @@
 """
 main.py
-FastAPI core router + live dashboard for Aegis.
+FastAPI core router + live dashboard for AuraSense.
 
 Receives anomaly webhooks from the vision pipeline and coordinates responses.
 A small in-memory event log and HTML dashboard let you monitor the process in real time.
@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import requests
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -36,7 +35,11 @@ def _env(key: str, default: str | None = None) -> str | None:
 project_root = Path(__file__).resolve().parent.parent
 load_dotenv(project_root / ".env")
 
-HARDWARE_IP_URL = _env("HARDWARE_IP_URL")
+# The FREE-WILi display CPU, over USB serial (backend/device.py). Blank = no
+# board connected; "auto" = find it by USB ID; or a port such as COM4. The
+# board's COM ports are only visible to Windows Python, not to WSL.
+DEVICE_ADDRESS = _env("DEVICE_ADDRESS")
+INTERVENE_DURATION_S = int(_env("INTERVENE_DURATION_S", "120"))
 PORT = int(_env("PORT", "8000"))
 MAX_EVENTS = 50
 
@@ -75,29 +78,51 @@ def _update_event(event_id: str, **kwargs: Any) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan hook for startup/shutdown logic."""
-    print("[Aegis Backend] Starting up...")
+    print("[AuraSense Backend] Starting up...")
     yield
-    print("[Aegis Backend] Shutting down...")
+    print("[AuraSense Backend] Shutting down...")
 
 
-app = FastAPI(title="Aegis Backend Router", lifespan=lifespan)
+app = FastAPI(title="AuraSense Backend Router", lifespan=lifespan)
 
 
-async def _trigger_hardware(url: str, event_id: str) -> str:
+# One serial port, one user at a time: overlapping webhooks would otherwise
+# race to open it and the second would fail with "access denied".
+_device_lock = threading.Lock()
+
+
+def _device_command(name: str, **kwargs: Any) -> dict[str, Any]:
+    """Open the board, send one command (ping/idle/intervene), close it."""
+    try:
+        from backend import device   # imported as a package (pytest)
+    except ImportError:
+        import device                # run as a script: python backend/main.py
+    port = None if DEVICE_ADDRESS.lower() == "auto" else DEVICE_ADDRESS
+    with _device_lock, device.Device(port=port) as dev:
+        return getattr(dev, name)(**kwargs)
+
+
+def _reply_status(reply: dict[str, Any]) -> str:
+    if reply.get("ok"):
+        return f"ok ({reply.get('state')})"
+    return f"error: {reply.get('error', 'rejected')}"
+
+
+async def _trigger_hardware(event_id: str) -> str:
     """
-    Wake the FREE-WILi board with an HTTP request.
+    Start a breathing session on the FREE-WILi board.
 
-    Runs the synchronous `requests` call in a thread pool so the event loop
-    is not blocked during the hackathon demo.
+    The serial round trip runs in a thread pool so the event loop is not
+    blocked during the hackathon demo.
     """
     try:
-        response = await asyncio.to_thread(requests.post, url, timeout=2)
-        response.raise_for_status()
-        status = f"ok ({response.status_code})"
-        print(f"[Hardware] Device triggered: {response.status_code}")
-    except requests.exceptions.RequestException as exc:
+        reply = await asyncio.to_thread(
+            _device_command, "intervene", duration_s=INTERVENE_DURATION_S)
+        status = _reply_status(reply)
+        print(f"[Hardware] Device replied: {reply}")
+    except Exception as exc:  # unplugged, port busy, no reply: never fail the webhook
         status = f"error: {exc}"
-        print(f"[Hardware] Could not reach FREE-WILi board at {url}: {exc}")
+        print(f"[Hardware] Could not reach the FREE-WILi board: {exc}")
 
     _update_event(event_id, hardware_status=status)
     return status
@@ -123,8 +148,8 @@ async def _process_anomaly(payload: AnomalyPayload) -> dict[str, str]:
     _add_event(event)
 
     # Trigger physical intervention if configured, otherwise mark as not configured.
-    if HARDWARE_IP_URL:
-        await _trigger_hardware(HARDWARE_IP_URL, event_id)
+    if DEVICE_ADDRESS:
+        await _trigger_hardware(event_id)
     else:
         _update_event(event_id, hardware_status="not_configured")
 
@@ -153,6 +178,29 @@ async def receive_event(payload: AnomalyPayload) -> dict[str, str]:
     return await _process_anomaly(payload)
 
 
+@app.post("/simulate")
+async def simulate() -> dict[str, str]:
+    """Fire a fake high-stress event through the real pipeline (the demo trigger)."""
+    return await _process_anomaly(AnomalyPayload(
+        event="panic_attack",
+        trigger_source="simulate",
+        heart_rate=118,
+        respiration=26,
+    ))
+
+
+@app.post("/device/idle")
+async def device_idle() -> dict[str, str]:
+    """End a running breathing session on the board."""
+    if not DEVICE_ADDRESS:
+        return {"status": "not_configured"}
+    try:
+        reply = await asyncio.to_thread(_device_command, "idle")
+        return {"status": _reply_status(reply)}
+    except Exception as exc:
+        return {"status": f"error: {exc}"}
+
+
 @app.get("/events")
 async def get_events() -> list[dict[str, Any]]:
     """Return the recent anomaly event log for the dashboard."""
@@ -168,14 +216,14 @@ async def health_check() -> dict[str, str]:
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard() -> str:
-    """A web UI to trigger and monitor the Aegis pipeline."""
+    """A web UI to trigger and monitor the AuraSense pipeline."""
     return """
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Aegis Dashboard</title>
+  <title>AuraSense Dashboard</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
     h1 { font-size: 1.5rem; }
@@ -190,7 +238,7 @@ async def dashboard() -> str:
   </style>
 </head>
 <body>
-  <h1>Aegis Intervention Dashboard</h1>
+  <h1>AuraSense Intervention Dashboard</h1>
   <p>
     <button id="trigger">Trigger Test Panic Webhook</button>
     <span id="status"></span>
